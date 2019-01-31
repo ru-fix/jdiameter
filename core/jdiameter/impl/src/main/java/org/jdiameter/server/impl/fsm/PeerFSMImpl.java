@@ -94,425 +94,421 @@ public class PeerFSMImpl extends org.jdiameter.client.impl.fsm.PeerFSMImpl imple
   }
 
   @Override
-  protected State[] getStates() {
-    if (states == null) {
-      states = new State[] {
-          new MyState() { // OKEY
-            @Override
-            public void entryAction() { // todo send buffered messages
-              setInActiveTimer();
-              watchdogSent = false;
-            }
+  protected State[] createStates() {
+    return new State[] {
+        new MyState() { // OKEY
+          @Override
+          public void entryAction() { // todo send buffered messages
+            setInActiveTimer();
+            watchdogSent = false;
+          }
 
-            @Override
-            public boolean processEvent(StateEvent event) {
-              switch (type(event)) {
-                case DISCONNECT_EVENT:
-                  doEndConnection();
-                  break;
-                case TIMEOUT_EVENT:
-                  try {
-                    context.sendDwrMessage();
-                    setTimer(DWA_TIMEOUT);
-                    if (watchdogSent) {
-                      switchToNextState(SUSPECT);
-                    }
-                    else {
-                      watchdogSent = true;
-                    }
+          @Override
+          public boolean processEvent(StateEvent event) {
+            switch (type(event)) {
+              case DISCONNECT_EVENT:
+                doEndConnection();
+                break;
+              case TIMEOUT_EVENT:
+                try {
+                  context.sendDwrMessage();
+                  setTimer(DWA_TIMEOUT);
+                  if (watchdogSent) {
+                    switchToNextState(SUSPECT);
                   }
-                  catch (Throwable e) {
-                    logger.debug("Can not send DWR", e);
+                  else {
+                    watchdogSent = true;
+                  }
+                }
+                catch (Throwable e) {
+                  logger.debug("Can not send DWR", e);
+                  doDisconnect();
+                  doEndConnection();
+                }
+                break;
+              case STOP_EVENT:
+                try {
+                  if (event.getData() == null) {
+                    context.sendDprMessage(DisconnectCause.BUSY);
+                  }
+                  else {
+                    Integer disconnectCause = (Integer) event.getData();
+                    context.sendDprMessage(disconnectCause);
+                  }
+                  setTimer(DPA_TIMEOUT);
+                  switchToNextState(STOPPING);
+                }
+                catch (Throwable e) {
+                  logger.debug("Can not send DPR", e);
+                  doDisconnect();
+                  switchToNextState(DOWN);
+                }
+                break;
+              case RECEIVE_MSG_EVENT:
+                setInActiveTimer();
+                context.receiveMessage(message(event));
+                break;
+              case CEA_EVENT:
+                setInActiveTimer();
+                if (context.processCeaMessage(key(event), message(event))) {
+                  doDisconnect(); // !
+                  doEndConnection();
+                }
+                break;
+              case CER_EVENT:
+                // setInActiveTimer();
+                logger.debug("Rejecting CER in OKAY state. Answering with UNABLE_TO_COMPLY (5012)");
+                try {
+                  context.sendCeaMessage(ResultCode.UNABLE_TO_COMPLY, message(event), "Unable to receive CER in OPEN state.");
+                }
+                catch (Exception e) {
+                  logger.debug("Failed to send CEA.", e);
+                  doDisconnect();  // !
+                  doEndConnection();
+                }
+                break;
+              case DPR_EVENT:
+                try {
+                  int code = context.processDprMessage((IMessage) event.getData());
+                  context.sendDpaMessage(message(event), code, null);
+                }
+                catch (Throwable e) {
+                  logger.debug("Can not send DPA", e);
+                }
+                IMessage message = (IMessage) event.getData();
+                try {
+                  Avp discCause = message.getAvps().getAvp(Avp.DISCONNECT_CAUSE);
+                  boolean willReconnect = (discCause != null) ? (discCause.getInteger32() == DisconnectCause.REBOOTING) : false;
+                  if (willReconnect) {
                     doDisconnect();
                     doEndConnection();
                   }
-                  break;
-                case STOP_EVENT:
-                  try {
-                    if (event.getData() == null) {
-                      context.sendDprMessage(DisconnectCause.BUSY);
-                    }
-                    else {
-                      Integer disconnectCause = (Integer) event.getData();
-                      context.sendDprMessage(disconnectCause);
-                    }
-                    setTimer(DPA_TIMEOUT);
-                    switchToNextState(STOPPING);
-                  }
-                  catch (Throwable e) {
-                    logger.debug("Can not send DPR", e);
+                  else {
                     doDisconnect();
                     switchToNextState(DOWN);
                   }
-                  break;
-                case RECEIVE_MSG_EVENT:
+                }
+                catch (AvpDataException ade) {
+                  logger.warn("Disconnect cause is bad.", ade);
+                  doDisconnect();
+                  switchToNextState(DOWN);
+                }
+
+                break;
+              case DWR_EVENT:
+                setInActiveTimer();
+                try {
+                  context.sendDwaMessage(message(event), ResultCode.SUCCESS, null);
+                }
+                catch (Throwable e) {
+                  logger.debug("Can not send DWA, reconnecting", e);
+                  doDisconnect();
+                  doEndConnection();
+                }
+                break;
+              case DWA_EVENT:
+                setInActiveTimer();
+                watchdogSent = false;
+                break;
+              case SEND_MSG_EVENT:
+                try {
+                  context.sendMessage(message(event));
+                }
+                catch (Throwable e) {
+                  logger.debug("Can not send message", e);
+                  doDisconnect();
+                  doEndConnection();
+                }
+                break;
+              default:
+                logger.debug("Unknown event type {} in state {}", type(event), state);
+                return false;
+            }
+            return true;
+          }
+        },
+        new MyState() { // SUSPECT
+          @Override
+          public boolean processEvent(StateEvent event) {
+            switch (type(event)) {
+              case DISCONNECT_EVENT:
+                doEndConnection();
+                break;
+              case TIMEOUT_EVENT:
+                doDisconnect();
+                doEndConnection();
+                break;
+              case STOP_EVENT:
+                try {
+                  if (event.getData() == null) {
+                    context.sendDprMessage(DisconnectCause.REBOOTING);
+                  }
+                  else {
+                    Integer disconnectCause = (Integer) event.getData();
+                    context.sendDprMessage(disconnectCause);
+                  }
                   setInActiveTimer();
-                  context.receiveMessage(message(event));
-                  break;
-                case CEA_EVENT:
-                  setInActiveTimer();
-                  if (context.processCeaMessage(key(event), message(event))) {
-                    doDisconnect(); // !
+                  switchToNextState(STOPPING);
+                }
+                catch (Throwable e) {
+                  logger.debug("Can not send DPR", e);
+                  doDisconnect();
+                  switchToNextState(DOWN);
+                }
+                break;
+              case CER_EVENT:
+              case CEA_EVENT:
+              case DWA_EVENT:
+                clearTimer();
+                switchToNextState(OKAY);
+                break;
+              case DPR_EVENT:
+                try {
+                  int code = context.processDprMessage((IMessage) event.getData());
+                  context.sendDpaMessage(message(event), code, null);
+                }
+                catch (Throwable e) {
+                  logger.debug("Can not send DPA", e);
+                }
+                IMessage message = (IMessage) event.getData();
+                try {
+                  if (message.getAvps().getAvp(Avp.DISCONNECT_CAUSE) != null &&
+                      message.getAvps().getAvp(Avp.DISCONNECT_CAUSE).getInteger32() == DisconnectCause.REBOOTING) {
+                    doDisconnect();
                     doEndConnection();
                   }
-                  break;
-                case CER_EVENT:
-                  // setInActiveTimer();
-                  logger.debug("Rejecting CER in OKAY state. Answering with UNABLE_TO_COMPLY (5012)");
+                  else {
+                    doDisconnect();
+                    switchToNextState(DOWN);
+                  }
+                } catch (AvpDataException e1) {
+                  logger.warn("Disconnect cause is bad.", e1);
+                  doDisconnect();
+                  switchToNextState(DOWN);
+                }
+                break;
+              case DWR_EVENT:
+                try {
+                  int code = context.processDwrMessage((IMessage) event.getData());
+                  context.sendDwaMessage(message(event), code, null);
+                  switchToNextState(OKAY);
+                }
+                catch (Throwable e) {
+                  logger.debug("Can not send DWA", e);
+                  doDisconnect();
+                  switchToNextState(DOWN);
+                }
+                break;
+              case RECEIVE_MSG_EVENT:
+                clearTimer();
+                context.receiveMessage(message(event));
+                switchToNextState(OKAY);
+                break;
+              case SEND_MSG_EVENT: // todo buffering
+                throw new IllegalStateException("Connection is down");
+              default:
+                logger.debug("Unknown event type {} in state {}", type(event), state);
+                return false;
+            }
+            return true;
+          }
+        },
+        new MyState() { // DOWN
+          @Override
+          public void entryAction() {
+            setTimer(0);
+            //FIXME: baranowb: removed this, cause this breaks peers as
+            //       it seems, if peer is not removed, it will linger
+            //       without any way to process messages
+            // if (context.isRestoreConnection()) {
+            //PCB added FSM multithread
+            mustRun = false;
+            // }
+            context.removeStatistics();
+          }
+
+          @Override
+          public boolean processEvent(StateEvent event) {
+            switch (type(event)) {
+              case START_EVENT:
+                try {
+                  context.createStatistics();
+                  if (!context.isConnected()) {
+                    context.connect();
+                  }
+                  context.sendCerMessage();
+                  setTimer(CEA_TIMEOUT);
+                  switchToNextState(INITIAL);
+                }
+                catch (Throwable e) {
+                  logger.debug("Connect error", e);
+                  doEndConnection();
+                }
+                break;
+              case CER_EVENT:
+                context.createStatistics();
+                int resultCode = context.processCerMessage(key(event), message(event));
+                if (resultCode == ResultCode.SUCCESS) {
                   try {
-                    context.sendCeaMessage(ResultCode.UNABLE_TO_COMPLY, message(event), "Unable to receive CER in OPEN state.");
+                    context.sendCeaMessage(resultCode, message(event), null);
+                    switchToNextState(OKAY);
                   }
                   catch (Exception e) {
                     logger.debug("Failed to send CEA.", e);
                     doDisconnect();  // !
                     doEndConnection();
                   }
-                  break;
-                case DPR_EVENT:
+                }
+                else {
                   try {
-                    int code = context.processDprMessage((IMessage) event.getData());
-                    context.sendDpaMessage(message(event), code, null);
-                  }
-                  catch (Throwable e) {
-                    logger.debug("Can not send DPA", e);
-                  }
-                  IMessage message = (IMessage) event.getData();
-                  try {
-                    Avp discCause = message.getAvps().getAvp(Avp.DISCONNECT_CAUSE);
-                    boolean willReconnect = (discCause != null) ? (discCause.getInteger32() == DisconnectCause.REBOOTING) : false;
-                    if (willReconnect) {
-                      doDisconnect();
-                      doEndConnection();
-                    }
-                    else {
-                      doDisconnect();
-                      switchToNextState(DOWN);
-                    }
-                  }
-                  catch (AvpDataException ade) {
-                    logger.warn("Disconnect cause is bad.", ade);
-                    doDisconnect();
-                    switchToNextState(DOWN);
-                  }
-
-                  break;
-                case DWR_EVENT:
-                  setInActiveTimer();
-                  try {
-                    context.sendDwaMessage(message(event), ResultCode.SUCCESS, null);
-                  }
-                  catch (Throwable e) {
-                    logger.debug("Can not send DWA, reconnecting", e);
-                    doDisconnect();
-                    doEndConnection();
-                  }
-                  break;
-                case DWA_EVENT:
-                  setInActiveTimer();
-                  watchdogSent = false;
-                  break;
-                case SEND_MSG_EVENT:
-                  try {
-                    context.sendMessage(message(event));
-                  }
-                  catch (Throwable e) {
-                    logger.debug("Can not send message", e);
-                    doDisconnect();
-                    doEndConnection();
-                  }
-                  break;
-                default:
-                  logger.debug("Unknown event type {} in state {}", type(event), state);
-                  return false;
-              }
-              return true;
-            }
-          },
-          new MyState() { // SUSPECT
-            @Override
-            public boolean processEvent(StateEvent event) {
-              switch (type(event)) {
-                case DISCONNECT_EVENT:
-                  doEndConnection();
-                  break;
-                case TIMEOUT_EVENT:
-                  doDisconnect();
-                  doEndConnection();
-                  break;
-                case STOP_EVENT:
-                  try {
-                    if (event.getData() == null) {
-                      context.sendDprMessage(DisconnectCause.REBOOTING);
-                    }
-                    else {
-                      Integer disconnectCause = (Integer) event.getData();
-                      context.sendDprMessage(disconnectCause);
-                    }
-                    setInActiveTimer();
-                    switchToNextState(STOPPING);
-                  }
-                  catch (Throwable e) {
-                    logger.debug("Can not send DPR", e);
-                    doDisconnect();
-                    switchToNextState(DOWN);
-                  }
-                  break;
-                case CER_EVENT:
-                case CEA_EVENT:
-                case DWA_EVENT:
-                  clearTimer();
-                  switchToNextState(OKAY);
-                  break;
-                case DPR_EVENT:
-                  try {
-                    int code = context.processDprMessage((IMessage) event.getData());
-                    context.sendDpaMessage(message(event), code, null);
-                  }
-                  catch (Throwable e) {
-                    logger.debug("Can not send DPA", e);
-                  }
-                  IMessage message = (IMessage) event.getData();
-                  try {
-                    if (message.getAvps().getAvp(Avp.DISCONNECT_CAUSE) != null &&
-                        message.getAvps().getAvp(Avp.DISCONNECT_CAUSE).getInteger32() == DisconnectCause.REBOOTING) {
-                      doDisconnect();
-                      doEndConnection();
-                    }
-                    else {
-                      doDisconnect();
-                      switchToNextState(DOWN);
-                    }
-                  } catch (AvpDataException e1) {
-                    logger.warn("Disconnect cause is bad.", e1);
-                    doDisconnect();
-                    switchToNextState(DOWN);
-                  }
-                  break;
-                case DWR_EVENT:
-                  try {
-                    int code = context.processDwrMessage((IMessage) event.getData());
-                    context.sendDwaMessage(message(event), code, null);
-                    switchToNextState(OKAY);
-                  }
-                  catch (Throwable e) {
-                    logger.debug("Can not send DWA", e);
-                    doDisconnect();
-                    switchToNextState(DOWN);
-                  }
-                  break;
-                case RECEIVE_MSG_EVENT:
-                  clearTimer();
-                  context.receiveMessage(message(event));
-                  switchToNextState(OKAY);
-                  break;
-                case SEND_MSG_EVENT: // todo buffering
-                  throw new IllegalStateException("Connection is down");
-                default:
-                  logger.debug("Unknown event type {} in state {}", type(event), state);
-                  return false;
-              }
-              return true;
-            }
-          },
-          new MyState() { // DOWN
-            @Override
-            public void entryAction() {
-              setTimer(0);
-              //FIXME: baranowb: removed this, cause this breaks peers as
-              //       it seems, if peer is not removed, it will linger
-              //       without any way to process messages
-              // if (context.isRestoreConnection()) {
-              //PCB added FSM multithread
-              mustRun = false;
-              // }
-              context.removeStatistics();
-            }
-
-            @Override
-            public boolean processEvent(StateEvent event) {
-              switch (type(event)) {
-                case START_EVENT:
-                  try {
-                    context.createStatistics();
-                    if (!context.isConnected()) {
-                      context.connect();
-                    }
-                    context.sendCerMessage();
-                    setTimer(CEA_TIMEOUT);
-                    switchToNextState(INITIAL);
-                  }
-                  catch (Throwable e) {
-                    logger.debug("Connect error", e);
-                    doEndConnection();
-                  }
-                  break;
-                case CER_EVENT:
-                  context.createStatistics();
-                  int resultCode = context.processCerMessage(key(event), message(event));
-                  if (resultCode == ResultCode.SUCCESS) {
-                    try {
-                      context.sendCeaMessage(resultCode, message(event), null);
-                      switchToNextState(OKAY);
-                    }
-                    catch (Exception e) {
-                      logger.debug("Failed to send CEA.", e);
-                      doDisconnect();  // !
-                      doEndConnection();
-                    }
-                  }
-                  else {
-                    try {
-                      context.sendCeaMessage(resultCode, message(event),  null);
-                    }
-                    catch (Exception e) {
-                      logger.debug("Failed to send CEA.", e);
-                    }
-                    doDisconnect(); // !
-                    doEndConnection();
-                  }
-                  break;
-                case SEND_MSG_EVENT:
-                  // todo buffering
-                  throw new IllegalStateException("Connection is down");
-                case STOP_EVENT:
-                case TIMEOUT_EVENT:
-                case DISCONNECT_EVENT:
-                  // those are ~legal, ie. DISCONNECT_EVENT is sent back from connection
-                  break;
-                default:
-                  logger.debug("Unknown event type {} in state {}", type(event), state);
-                  return false;
-              }
-              return true;
-            }
-          },
-          new MyState() { // REOPEN
-            @Override
-            public boolean processEvent(StateEvent event) {
-              switch (type(event)) {
-                case CONNECT_EVENT:
-                  try {
-                    context.sendCerMessage();
-                    setTimer(CEA_TIMEOUT);
-                    switchToNextState(INITIAL);
-                  }
-                  catch (Throwable e) {
-                    logger.debug("Can not send CER", e);
-                    setTimer(REC_TIMEOUT);
-                  }
-                  break;
-                case TIMEOUT_EVENT:
-                  try {
-                    context.connect();
+                    context.sendCeaMessage(resultCode, message(event),  null);
                   }
                   catch (Exception e) {
-                    logger.debug("Can not connect to remote peer", e);
-                    setTimer(REC_TIMEOUT);
+                    logger.debug("Failed to send CEA.", e);
                   }
-                  break;
-                case STOP_EVENT:
-                  setTimer(0);
-                  doDisconnect();
-                  switchToNextState(DOWN);
-                  break;
-                case DISCONNECT_EVENT:
-                  break;
-                case SEND_MSG_EVENT:
-                  // todo buffering
-                  throw new IllegalStateException("Connection is down");
-                default:
-                  logger.debug("Unknown event type {} in state {}", type(event), state);
-                  return false;
-              }
-              return true;
+                  doDisconnect(); // !
+                  doEndConnection();
+                }
+                break;
+              case SEND_MSG_EVENT:
+                // todo buffering
+                throw new IllegalStateException("Connection is down");
+              case STOP_EVENT:
+              case TIMEOUT_EVENT:
+              case DISCONNECT_EVENT:
+                // those are ~legal, ie. DISCONNECT_EVENT is sent back from connection
+                break;
+              default:
+                logger.debug("Unknown event type {} in state {}", type(event), state);
+                return false;
             }
-          },
-          new MyState() { // INITIAL
-            @Override
-            public void entryAction() {
-              setTimer(CEA_TIMEOUT);
+            return true;
+          }
+        },
+        new MyState() { // REOPEN
+          @Override
+          public boolean processEvent(StateEvent event) {
+            switch (type(event)) {
+              case CONNECT_EVENT:
+                try {
+                  context.sendCerMessage();
+                  setTimer(CEA_TIMEOUT);
+                  switchToNextState(INITIAL);
+                }
+                catch (Throwable e) {
+                  logger.debug("Can not send CER", e);
+                  setTimer(REC_TIMEOUT);
+                }
+                break;
+              case TIMEOUT_EVENT:
+                try {
+                  context.connect();
+                }
+                catch (Exception e) {
+                  logger.debug("Can not connect to remote peer", e);
+                  setTimer(REC_TIMEOUT);
+                }
+                break;
+              case STOP_EVENT:
+                setTimer(0);
+                doDisconnect();
+                switchToNextState(DOWN);
+                break;
+              case DISCONNECT_EVENT:
+                break;
+              case SEND_MSG_EVENT:
+                // todo buffering
+                throw new IllegalStateException("Connection is down");
+              default:
+                logger.debug("Unknown event type {} in state {}", type(event), state);
+                return false;
             }
+            return true;
+          }
+        },
+        new MyState() { // INITIAL
+          @Override
+          public void entryAction() {
+            setTimer(CEA_TIMEOUT);
+          }
 
-            @Override
-            public boolean processEvent(StateEvent event) {
-              switch (type(event)) {
-                case DISCONNECT_EVENT:
-                  setTimer(0);
+          @Override
+          public boolean processEvent(StateEvent event) {
+            switch (type(event)) {
+              case DISCONNECT_EVENT:
+                setTimer(0);
+                doEndConnection();
+                break;
+              case TIMEOUT_EVENT:
+                doDisconnect();
+                doEndConnection();
+                break;
+              case STOP_EVENT:
+                setTimer(0);
+                doDisconnect();
+                switchToNextState(DOWN);
+                break;
+              case CEA_EVENT:
+                setTimer(0);
+                if (context.processCeaMessage(key(event), message(event))) {
+                  switchToNextState(OKAY);
+                }
+                else {
+                  doDisconnect(); // !
                   doEndConnection();
-                  break;
-                case TIMEOUT_EVENT:
-                  doDisconnect();
-                  doEndConnection();
-                  break;
-                case STOP_EVENT:
-                  setTimer(0);
-                  doDisconnect();
-                  switchToNextState(DOWN);
-                  break;
-                case CEA_EVENT:
-                  setTimer(0);
-                  if (context.processCeaMessage(key(event), message(event))) {
-                    switchToNextState(OKAY);
+                }
+                break;
+              case CER_EVENT:
+                int resultCode = context.processCerMessage(key(event), message(event));
+                if (resultCode == ResultCode.SUCCESS) {
+                  try {
+                    context.sendCeaMessage(resultCode, message(event), null);
+                    switchToNextState(OKAY); // if other connection is win
                   }
-                  else {
-                    doDisconnect(); // !
-                    doEndConnection();
-                  }
-                  break;
-                case CER_EVENT:
-                  int resultCode = context.processCerMessage(key(event), message(event));
-                  if (resultCode == ResultCode.SUCCESS) {
-                    try {
-                      context.sendCeaMessage(resultCode, message(event), null);
-                      switchToNextState(OKAY); // if other connection is win
-                    }
-                    catch (Exception e) {
-                      logger.debug("Can not send CEA", e);
-                      doDisconnect();
-                      doEndConnection();
-                    }
-                  }
-                  else if (resultCode == -1 || resultCode == ResultCode.NO_COMMON_APPLICATION) {
+                  catch (Exception e) {
+                    logger.debug("Can not send CEA", e);
                     doDisconnect();
                     doEndConnection();
                   }
-                  break;
-                case SEND_MSG_EVENT:
-                  // todo buffering
-                  throw new IllegalStateException("Connection is down");
-                default:
-                  logger.debug("Unknown event type {} in state {}", type(event), state);
-                  return false;
-              }
-              return true;
+                }
+                else if (resultCode == -1 || resultCode == ResultCode.NO_COMMON_APPLICATION) {
+                  doDisconnect();
+                  doEndConnection();
+                }
+                break;
+              case SEND_MSG_EVENT:
+                // todo buffering
+                throw new IllegalStateException("Connection is down");
+              default:
+                logger.debug("Unknown event type {} in state {}", type(event), state);
+                return false;
             }
-          },
-          new MyState() { // STOPPING
-            @Override
-            public boolean processEvent(StateEvent event) {
-              switch (type(event)) {
-                case TIMEOUT_EVENT:
-                case DPA_EVENT:
-                  switchToNextState(DOWN);
-                  break;
-                case RECEIVE_MSG_EVENT:
-                  context.receiveMessage(message(event));
-                  break;
-                case SEND_MSG_EVENT:
-                  throw new IllegalStateException("Stack now is stopping");
-                case STOP_EVENT:
-                case DISCONNECT_EVENT:
-                  break;
-                default:
-                  logger.debug("Unknown event type {} in state {}", type(event), state);
-                  return false;
-              }
-              return true;
-            }
+            return true;
           }
-      };
-    }
-
-    return states;
+        },
+        new MyState() { // STOPPING
+          @Override
+          public boolean processEvent(StateEvent event) {
+            switch (type(event)) {
+              case TIMEOUT_EVENT:
+              case DPA_EVENT:
+                switchToNextState(DOWN);
+                break;
+              case RECEIVE_MSG_EVENT:
+                context.receiveMessage(message(event));
+                break;
+              case SEND_MSG_EVENT:
+                throw new IllegalStateException("Stack now is stopping");
+              case STOP_EVENT:
+              case DISCONNECT_EVENT:
+                break;
+              default:
+                logger.debug("Unknown event type {} in state {}", type(event), state);
+                return false;
+            }
+            return true;
+          }
+        }
+    };
   }
 }
