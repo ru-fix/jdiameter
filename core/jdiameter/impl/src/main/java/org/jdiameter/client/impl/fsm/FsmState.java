@@ -54,12 +54,12 @@ public class FsmState {
 
   protected static int index;
 
-  public static FsmState OKAY = new FsmState("OKAY", PeerState.OKAY);
-  public static FsmState SUSPECT = new FsmState("SUSPECT", PeerState.SUSPECT);
-  public static FsmState DOWN = new FsmState("DOWN", PeerState.DOWN);
-  public static FsmState REOPEN = new FsmState("REOPEN", PeerState.REOPEN);
-  public static FsmState INITIAL = new FsmState("INITIAL", PeerState.INITIAL);
-  public static FsmState STOPPING = new FsmState("STOPPING", PeerState.DOWN, true);
+  public static final FsmState OKAY = new FsmState("OKAY", PeerState.OKAY);
+  public static final FsmState SUSPECT = new FsmState("SUSPECT", PeerState.SUSPECT);
+  public static final FsmState DOWN = new FsmState("DOWN", PeerState.DOWN);
+  public static final FsmState REOPEN = new FsmState("REOPEN", PeerState.REOPEN);
+  public static final FsmState INITIAL = new FsmState("INITIAL", PeerState.INITIAL);
+  public static final FsmState STOPPING = new FsmState("STOPPING", PeerState.DOWN, true);
 
   private String name;
   private int ordinal;
