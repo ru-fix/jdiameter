@@ -57,6 +57,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -99,7 +100,7 @@ public class PeerFSMImpl implements IStateMachine {
   protected final ConcurrentLinkedQueue<StateChangeListener> listeners;
   protected final LinkedBlockingQueue<StateEvent> eventQueue;
 
-  protected FsmState state = FsmState.DOWN;
+  protected final AtomicReference<FsmState> state = new AtomicReference<>(FsmState.DOWN);
   protected volatile boolean watchdogSent;
   protected volatile long timer;
   protected long CEA_TIMEOUT = 0, IAC_TIMEOUT = 0, REC_TIMEOUT = 0, DWA_TIMEOUT = 0, DPA_TIMEOUT = 0;
@@ -233,7 +234,7 @@ public class PeerFSMImpl implements IStateMachine {
                   timeCount.inc();
                 }
                 logger.debug("Process event [{}]. Peer State is [{}]", event, state);
-                getStates()[state.ordinal()].processEvent(event);
+                getStates()[state.get().ordinal()].processEvent(event);
               }
               if (timer != 0 && timer < System.currentTimeMillis()) {
                 // ZhixiaoLuo: add lock here to avoid 2 timeout events at the same time if 2 threads get into timer=0
@@ -242,7 +243,7 @@ public class PeerFSMImpl implements IStateMachine {
                 try {
                   if (timer != 0 && timer < System.currentTimeMillis()) {
                     timer = 0;
-                    if (state != DOWN) { //without this check this event is fired in DOWN state.... it should not be.
+                    if (state.get() != DOWN) { //without this check this event is fired in DOWN state.... it should not be.
                       logger.debug("Sending timeout event");
                       handleEvent(timeOutEvent); //FIXME: check why timer is not killed?
                     }
@@ -310,19 +311,22 @@ public class PeerFSMImpl implements IStateMachine {
   }
 
   protected void switchToNextState(FsmState newState) {
-    // Fix for Issue #3026 (http://code.google.com/p/mobicents/issues/detail?id=3026)
-    // notify only when it's a new public state
-    if (newState.getPublicState() != state.getPublicState()) {
-      for (StateChangeListener l : listeners) {
-        l.stateChanged(state.getPublicState(), newState.getPublicState());
+    synchronized (state) {
+      FsmState currentState = state.get();
+      // Fix for Issue #3026 (http://code.google.com/p/mobicents/issues/detail?id=3026)
+      // notify only when it's a new public state
+      if (newState.getPublicState() != currentState.getPublicState()) {
+        for (StateChangeListener l : listeners) {
+          l.stateChanged(currentState.getPublicState(), newState.getPublicState());
+        }
       }
+      getStates()[currentState.ordinal()].exitAction();
+      if (logger.isDebugEnabled()) {
+        logger.debug("{} FSM switch state: {} -> {}", context.getPeerDescription(), currentState, newState);
+      }
+      state.set(newState);
+      getStates()[newState.ordinal()].entryAction();
     }
-    getStates()[state.ordinal()].exitAction();
-    if (logger.isDebugEnabled()) {
-      logger.debug("{} FSM switch state: {} -> {}", new Object[] {context.getPeerDescription(), state, newState});
-    }
-    state = newState;
-    getStates()[state.ordinal()].entryAction();
   }
 
   @Override
@@ -398,7 +402,7 @@ public class PeerFSMImpl implements IStateMachine {
   @Override
   public <E> E getState(Class<E> a) {
     if (a == PeerState.class) {
-      return (E) state.getPublicState();
+      return (E) state.get().getPublicState();
     }
     else {
       return null;
