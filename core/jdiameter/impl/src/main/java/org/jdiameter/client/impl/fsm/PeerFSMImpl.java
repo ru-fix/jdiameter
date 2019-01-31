@@ -136,7 +136,7 @@ public class PeerFSMImpl implements IStateMachine {
     this.listeners = new ConcurrentLinkedQueue<StateChangeListener>();
     loadTimeOuts(config);
     this.concurrentFactory = concurrentFactory;
-    this.states = getStates();
+    this.states = createStates();
     FSM_THREAD_COUNT = config.getIntValue(PeerFSMThreadCount.ordinal(), (Integer) PeerFSMThreadCount.defValue());
     runQueueProcessing();
   }
