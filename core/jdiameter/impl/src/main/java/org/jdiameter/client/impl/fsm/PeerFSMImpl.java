@@ -54,6 +54,7 @@ import static org.jdiameter.client.impl.helpers.Parameters.RecTimeOut;
 
 import java.util.Random;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -105,7 +106,7 @@ public class PeerFSMImpl implements IStateMachine {
   protected long CEA_TIMEOUT = 0, IAC_TIMEOUT = 0, REC_TIMEOUT = 0, DWA_TIMEOUT = 0, DPA_TIMEOUT = 0;
 
   //PCB made FSM queue multi-threaded
-  private static int FSM_THREAD_COUNT = 3;
+  private final int FSM_THREAD_COUNT;
 
   protected final StateEvent timeOutEvent = new FsmEvent(EventTypes.TIMEOUT_EVENT);
   protected Random random = new Random();
@@ -204,11 +205,13 @@ public class PeerFSMImpl implements IStateMachine {
       queueStat = statisticFactory.newStatistic(context.getPeerDescription(), IStatistic.Groups.PeerFSM, queueSize, messagePrcAverageTime);
       logger.debug("Finished Initializing QueueStat @ Thread[{}]", Thread.currentThread().getName());
 
-      Runnable fsmQueueProcessor = new Runnable() {
+      final CountDownLatch executorsStarted = new CountDownLatch(FSM_THREAD_COUNT);
+      final Runnable fsmQueueProcessor = new Runnable() {
         @Override
         public void run() {
           int runningNow = numberOfThreadsRunning.incrementAndGet();
           logger.debug("Starting ... [{}] FSM threads are running", runningNow);
+          executorsStarted.countDown();
           //PCB changed for multi-thread
           while (mustRun) {
             StateEvent event;
@@ -276,6 +279,23 @@ public class PeerFSMImpl implements IStateMachine {
         logger.debug("Starting FSM Thread {} of {}", i, FSM_THREAD_COUNT);
         Thread executor = concurrentFactory.getThread("FSM-" + context.getPeerDescription() + "_" + i, fsmQueueProcessor);
         executor.start();
+      }
+      try {
+        // fixes race condition on stack.start
+        // executor.start does not wait for thread to actually start execution of fsmQueueProcessor
+        // and increment numberOfThreadsRunning in it
+        // When Stack.init (calls runQueueProcessing through constructor) is immediately followed by Stack.start
+        // handleEvent could be called with Start event when numberOfThreadsRunning is still 0.
+        // handleEvent then tries to rerun runQueueProcessing
+        boolean started = executorsStarted.await(1000, TimeUnit.MILLISECONDS);
+        if (!started) {
+          logger.warn("Executors are taking longer than 1000ms to start. Stopped waiting and moving on." +
+              " Stack.start may fail on race condition");
+        }
+      }
+      catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new RuntimeException("Interrupted on FSM executors start", e);
       }
     }
     finally {
