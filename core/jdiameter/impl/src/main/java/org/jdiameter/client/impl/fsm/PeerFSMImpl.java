@@ -500,6 +500,12 @@ public class PeerFSMImpl implements IStateMachine {
                 break;
               case TIMEOUT_EVENT:
                 try {
+                  if (!context.isConnected()) {
+                    doDisconnect();
+                    setTimer(REC_TIMEOUT);
+                    switchToNextState(FsmState.REOPEN);
+                    break;
+                  }
                   context.sendDwrMessage();
                   setTimer(DWA_TIMEOUT);
                   if (watchdogSent) {

@@ -111,6 +111,11 @@ public class PeerFSMImpl extends org.jdiameter.client.impl.fsm.PeerFSMImpl imple
                 break;
               case TIMEOUT_EVENT:
                 try {
+                  if (!context.isConnected()) {
+                    doDisconnect();
+                    doEndConnection();
+                    break;
+                  }
                   context.sendDwrMessage();
                   setTimer(DWA_TIMEOUT);
                   if (watchdogSent) {
