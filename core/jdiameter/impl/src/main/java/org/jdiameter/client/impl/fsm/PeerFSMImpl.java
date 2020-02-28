@@ -536,8 +536,8 @@ public class PeerFSMImpl implements IStateMachine {
                 }
                 catch (Throwable e) {
                   logger.debug("Can not send DPR", e);
-                  doDisconnect();
                   switchToNextState(FsmState.DOWN);
+                  doDisconnect();
                 }
                 break;
               case RECEIVE_MSG_EVENT:
@@ -552,8 +552,8 @@ public class PeerFSMImpl implements IStateMachine {
                 catch (Throwable e) {
                   logger.debug("Can not send DPA", e);
                 }
-                doDisconnect();
                 switchToNextState(FsmState.DOWN);
+                doDisconnect();
                 break;
               case DWR_EVENT:
                 setInActiveTimer();
@@ -563,8 +563,8 @@ public class PeerFSMImpl implements IStateMachine {
                 }
                 catch (Throwable e) {
                   logger.debug("Can not send DWA", e);
-                  doDisconnect();
                   switchToNextState(FsmState.DOWN);
+                  doDisconnect();
                 }
                 break;
               case DWA_EVENT:
@@ -616,8 +616,8 @@ public class PeerFSMImpl implements IStateMachine {
                 }
                 catch (Throwable e) {
                   logger.debug("Can not send DPR", e);
-                  doDisconnect();
                   switchToNextState(FsmState.DOWN);
+                  doDisconnect();
                 }
                 break;
               case DPR_EVENT:
@@ -628,8 +628,8 @@ public class PeerFSMImpl implements IStateMachine {
                 catch (Throwable e) {
                   logger.debug("Can not send DPA", e);
                 }
-                doDisconnect();
                 switchToNextState(FsmState.DOWN);
+                doDisconnect();
                 break;
               case DWA_EVENT:
                 switchToNextState(FsmState.OKAY);
@@ -642,8 +642,8 @@ public class PeerFSMImpl implements IStateMachine {
                 }
                 catch (Throwable e) {
                   logger.debug("Can not send DWA", e);
-                  doDisconnect();
                   switchToNextState(FsmState.DOWN);
+                  doDisconnect();
                 }
                 break;
               case RECEIVE_MSG_EVENT:
@@ -725,8 +725,8 @@ public class PeerFSMImpl implements IStateMachine {
                 break;
               case STOP_EVENT:
                 clearTimer();
-                doDisconnect();
                 switchToNextState(FsmState.DOWN);
+                doDisconnect();
                 break;
               case DISCONNECT_EVENT:
                 break;
@@ -759,8 +759,8 @@ public class PeerFSMImpl implements IStateMachine {
                 break;
               case STOP_EVENT:
                 clearTimer();
-                doDisconnect();
                 switchToNextState(FsmState.DOWN);
+                doDisconnect();
                 break;
               case CEA_EVENT:
                 clearTimer();
@@ -788,8 +788,8 @@ public class PeerFSMImpl implements IStateMachine {
             switch (event.encodeType(EventTypes.class)) {
               case TIMEOUT_EVENT:
               case DPA_EVENT:
-                doDisconnect();
                 switchToNextState(FsmState.DOWN);
+                doDisconnect();
                 break;
               case RECEIVE_MSG_EVENT:
                 context.receiveMessage(message(event));
